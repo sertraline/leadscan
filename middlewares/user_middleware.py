@@ -46,12 +46,10 @@ class StructLoggingMiddleware(BaseMiddleware):
 
         telegram_id = from_user.id
         username = from_user.username
-        name = f"{from_user.first_name} {from_user.last_name if from_user.last_name else ''}".strip()
 
         if telegram_id:
             data["user"] = await self.um.user_entry(
                 telegram_id=telegram_id,
-                name=name,
                 username=username
             )
         return await handler(event, data)

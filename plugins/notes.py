@@ -4,9 +4,11 @@ from typing import Callable, cast, Iterable, NamedTuple
 from models.users import User
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
-import re
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from traceback import format_exc
 from datetime import datetime, timedelta
+import json
+from redis.asyncio import Redis
 
 
 class Duration(NamedTuple):
@@ -31,6 +33,7 @@ DATES_KB = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 class Notes:
     command = "addnote"
+    items_per_page = 4
 
     def __init__(
         self,
@@ -39,6 +42,7 @@ class Notes:
         bot: Bot,
         debug: Callable,
         prefix: str,
+        redis: Redis,
         **_,
     ):
         self.dp = dp
@@ -46,6 +50,7 @@ class Notes:
         self.bot = bot
         self.debug = debug
         self.prefix = prefix
+        self.redis = redis
 
         self.dp.message.register(
             self.note_entry,
@@ -53,6 +58,9 @@ class Notes:
         )
         self.dp.message.register(self.date_entered, Form.date_set)
         self.dp.message.register(self.text_entered, Form.text_set)
+        self.dp.message.register(self.my_notes, filters.Command(commands=['mynotes'], prefix=self.prefix))
+        self.dp.callback_query.register(self.next_page, F.data.startswith("nextpage_"))
+        self.dp.callback_query.register(self.prev_page, F.data.startswith("prevpage_"))
 
     def get_duration(self, arg: str) -> Duration:
         units = {
@@ -81,6 +89,189 @@ class Notes:
 
         date = datetime.now() + timedelta(**{key[0]: length})
         return Duration(duration=date)
+
+    async def my_notes(self, message: types.Message, user: User, state: FSMContext):
+        if not message.from_user:
+            return
+        if not user.email:
+            return await message.reply(
+                "Вы не зарегистрированы! Пройдите регистрацию через команду /start"
+            )
+
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+
+        query = "SELECT * FROM notes WHERE user_id = $1"
+        records = await self.sql.fetch(query, user.id)
+        if not records:
+            await message.reply("Заметок нет.")
+
+        records = [dict(i) for i in records]
+        for rec in records:
+            for key in rec.keys():
+                # сериализация дат
+                if key == "reminder_time":
+                    rec[key] = datetime.strftime(rec[key], '%d-%m-%Y %H:%M')
+
+        kb = InlineKeyboardBuilder()
+        total_items = len(records)
+        page = 1
+        pages = total_items // self.items_per_page
+
+        offset = (page - 1) * self.items_per_page
+        current = records[offset : offset + self.items_per_page]
+
+        text = ""
+        for i, item in enumerate(current, start=1):
+            txt = item["text"]
+            d = item["reminder_time"]
+            if len(txt) > 200:
+                txt = txt[:200] + "..."
+            k = f"{i}. <b>{d}</b>\n{txt}\n"
+            text += k
+
+        if pages > 1:
+            kb.row(
+                types.InlineKeyboardButton(
+                    text=f"Далее (1/{pages})",
+                    callback_data=f"nextpage_{chat_id}_{user_id}_{page+1}_{message.message_id}",
+                ),
+            )
+
+        await self.redis.set(f"{chat_id}_{user_id}", json.dumps(records))
+        await message.reply(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+
+    async def next_page(self, cb: types.CallbackQuery):
+        data = cb.data
+        if not data:
+            return
+        data = data.split("_")
+        # str, chat_id, user_id, page, message_id
+        chat_id = int(data[1])
+        user_id = int(data[2])
+        page = int(data[3])
+        m_id = int(data[4])
+
+        if cb.from_user.id != user_id:
+            return await cb.answer("Это не для вас")
+
+        parsed = await self.redis.get(f"{chat_id}_{user_id}")
+        if not parsed:
+            return await cb.answer("Нет данных")
+        parsed = json.loads(parsed)
+
+        kb = InlineKeyboardBuilder()
+        total_items = len(parsed)
+        pages = total_items // self.items_per_page
+
+        offset = (page - 1) * self.items_per_page
+        current = parsed[offset : offset + self.items_per_page]
+
+        text = ""
+        for i, item in enumerate(current, start=1):
+            txt = item["text"]
+            d = item["reminder_time"]
+            if len(txt) > 200:
+                txt = txt[:200] + "..."
+            k = f"{i}. <b>{d}</b>\n{txt}\n"
+            text += k
+
+        if page + 1 <= pages:
+            kb.row(
+                types.InlineKeyboardButton(
+                    text="Назад",
+                    callback_data=f"prevpage_{chat_id}_{user_id}_{page-1}_{m_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text=f"Далее ({page}/{pages})",
+                    callback_data=f"nextpage_{chat_id}_{user_id}_{page+1}_{m_id}",
+                ),
+            )
+        else:
+            kb.row(
+                types.InlineKeyboardButton(
+                    text="Назад",
+                    callback_data=f"prevpage_{chat_id}_{user_id}_{page-1}_{m_id}",
+                ),
+            )
+
+        if cb.message:
+            await self.bot.delete_message(
+                chat_id=chat_id, message_id=cb.message.message_id
+            )
+        await self.bot.send_message(
+            chat_id=chat_id,
+            reply_to_message_id=m_id,
+            text=text,
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML",
+        )
+
+    async def prev_page(self, cb: types.CallbackQuery):
+        data = cb.data
+        if not data:
+            return
+        data = data.split("_")
+        # str, chat_id, user_id, page, message_id
+        chat_id = int(data[1])
+        user_id = int(data[2])
+        page = int(data[3])
+        m_id = int(data[4])
+
+        if cb.from_user.id != user_id:
+            return await cb.answer("Nuh-uh")
+
+        parsed = await self.redis.get(f"{chat_id}_{user_id}")
+        if not parsed:
+            return await cb.answer("Uh-oh")
+        parsed = json.loads(parsed)
+
+        kb = InlineKeyboardBuilder()
+        total_items = len(parsed)
+        pages = total_items // self.items_per_page
+
+        offset = (page - 1) * self.items_per_page
+        current = parsed[offset : offset + self.items_per_page]
+
+        text = ""
+        for i, item in enumerate(current, start=1):
+            txt = item["text"]
+            d = item["reminder_time"]
+            if len(txt) > 200:
+                txt = txt[:200] + "..."
+            k = f"{i}. <b>{d}</b>\n{txt}\n"
+            text += k
+
+        if page >= 2:
+            kb.row(
+                types.InlineKeyboardButton(
+                    text="Назад",
+                    callback_data=f"prevpage_{chat_id}_{user_id}_{page-1}_{m_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text=f"Далее ({page}/{pages})",
+                    callback_data=f"nextpage_{chat_id}_{user_id}_{page+1}_{m_id}",
+                ),
+            )
+        else:
+            kb.row(
+                types.InlineKeyboardButton(
+                    text=f"Далее ({page}/{pages})",
+                    callback_data=f"nextpage_{chat_id}_{user_id}_{page+1}_{m_id}",
+                ),
+            )
+
+        if cb.message:
+            await self.bot.delete_message(
+                chat_id=chat_id, message_id=cb.message.message_id
+            )
+        await self.bot.send_message(
+            chat_id=chat_id,
+            reply_to_message_id=m_id,
+            text=text,
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML",
+        )
 
     async def note_entry(self, message: types.Message, user: User, state: FSMContext):
         if not message.from_user:

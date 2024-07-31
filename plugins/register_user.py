@@ -9,6 +9,7 @@ from traceback import format_exc
 
 
 class Form(StatesGroup):
+    name = State()
     email = State()
 
 
@@ -36,6 +37,9 @@ class Register:
         )
         self.dp.message.register(
             self.email_sent, Form.email
+        )
+        self.dp.message.register(
+            self.name_sent, Form.name
         )
 
     # точка входа
@@ -72,11 +76,32 @@ class Register:
             await state.set_state(Form.email)
             return await message.reply("Введенный email адрес не является валидным. Проверьте свой адрес на ошибки и повторите еще раз.")
 
+        await state.set_data({'email': email})
+        await state.set_state(Form.name)
+
+        await self.bot.send_message(
+            message.chat.id,
+            "Отлично! Теперь введите Ваше имя.",
+        )
+
+    async def name_sent(self, message: types.Message, user: User, state: FSMContext):
+        current_state = await state.get_state()
+        if current_state is None:
+            return
+
+        if not message.text:
+            return
+        if not message.from_user:
+            return
+
+        data = await state.get_data()
+        email = data['email']
+
         await state.clear()
 
-        query = "UPDATE users SET email = $1 WHERE telegram_id = $2"
+        query = "UPDATE users SET email = $1, name = $2 WHERE telegram_id = $3"
         try:
-            await self.sql.exec(query, email, message.from_user.id)
+            await self.sql.exec(query, email, message.text.strip(), message.from_user.id)
         except Exception:
             self.debug(format_exc())
             return await self.bot.send_message(
@@ -85,5 +110,5 @@ class Register:
 
         await self.bot.send_message(
             message.chat.id,
-            "Пользователь успешно зарегистрирован! Для добавления заметок используйте /addnote",
+            "Пользователь успешно зарегистрирован! Для добавления заметок используйте команду /addnote",
         )

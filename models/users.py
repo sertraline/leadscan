@@ -20,7 +20,7 @@ class User:
         # telegram_id соответствует id пользователя в телеграме
         self._telegram_id = data["telegram_id"]
         self._username = data["username"]
-        self._name = data["name"].strip()
+        self._name = data["name"].strip() if data["name"] else ""
         self._email = data["email"]
         self.user_manager = user_manager
 
@@ -89,7 +89,7 @@ class UserManager(BaseModel):
             id                  SERIAL PRIMARY KEY,
             telegram_id         BIGINT NOT NULL UNIQUE,
             username            VARCHAR DEFAULT '',
-            name                VARCHAR(255) NOT NULL,
+            name                VARCHAR(255),
             email               VARCHAR(255)
         );
 
@@ -116,28 +116,25 @@ class UserManager(BaseModel):
         self,
         username: Optional[str],
         telegram_id: int,
-        name: str,
     ) -> User | UserAnonymous:
         res = await self.sql.fetch(
             """
             WITH ins1 AS (
-                INSERT INTO users(telegram_id, username, name)
-                VALUES ($1, $2, $3)
+                INSERT INTO users(telegram_id, username)
+                VALUES ($1, $2)
                 ON CONFLICT (telegram_id) DO UPDATE SET
-                username = $2, name = $3
+                username = $2
                 RETURNING id, telegram_id, username, name, email
             )
             SELECT * from ins1
         """,
             telegram_id,
             username,
-            name,
         )
 
         d = {
             'uid': telegram_id,
             'username': username,
-            'name': name
         }
         self.debug(
             (
