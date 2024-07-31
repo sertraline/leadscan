@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import json
 from redis.asyncio import Redis
 from pytz import timezone
+import math
 
 
 class Duration(NamedTuple):
@@ -34,7 +35,7 @@ DATES_KB = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 class Notes:
     command = "addnote"
-    items_per_page = 4
+    items_per_page = 5
 
     def __init__(
         self,
@@ -118,7 +119,7 @@ class Notes:
         kb = InlineKeyboardBuilder()
         total_items = len(records)
         page = 1
-        pages = total_items // self.items_per_page
+        pages = math.ceil(total_items / self.items_per_page)
 
         offset = (page - 1) * self.items_per_page
         current = records[offset : offset + self.items_per_page]
@@ -164,7 +165,7 @@ class Notes:
 
         kb = InlineKeyboardBuilder()
         total_items = len(parsed)
-        pages = total_items // self.items_per_page
+        pages = math.ceil(total_items / self.items_per_page)
 
         offset = (page - 1) * self.items_per_page
         current = parsed[offset : offset + self.items_per_page]
@@ -230,7 +231,7 @@ class Notes:
 
         kb = InlineKeyboardBuilder()
         total_items = len(parsed)
-        pages = total_items // self.items_per_page
+        pages = math.ceil(total_items / self.items_per_page)
 
         offset = (page - 1) * self.items_per_page
         current = parsed[offset : offset + self.items_per_page]
