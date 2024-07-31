@@ -1,0 +1,54 @@
+services:
+  psql-write:
+    image: bitnami/postgresql:latest
+    restart: always
+    container_name: aiotask.psql-write
+    environment:
+      - TZ=GMT+3
+      - PGTZ=GMT+3
+      - POSTGRESQL_USERNAME=${POSTGRESQL_USERNAME}
+      - POSTGRESQL_PASSWORD=${POSTGRESQL_PASSWORD}
+      - POSTGRESQL_DATABASE=${POSTGRESQL_DATABASE}
+      - ALLOW_EMPTY_PASSWORD=yes
+    ports:
+      - 127.0.0.1:${POSTGRESQL_WRITE_PORT}:5432
+    volumes:
+      - ./volumes/psql-write:/bitnami/postgresql:z
+    networks:
+      app_net_aiotask:
+        ipv4_address: 10.22.0.30
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: aiotask.pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    ports:
+      - 127.0.0.1:${PGADMIN_PORT}:80
+    volumes:
+      - ./volumes/pgadmin:/var/lib/pgadmin
+    networks:
+      app_net_aiotask:
+        ipv4_address: 10.22.0.40
+
+  redis:
+    image: redis:6-alpine
+    container_name: aiotask.redis
+    restart: always
+    command: redis-server
+    ports:
+      - 127.0.0.1:${REDIS_PORT}:6379
+    networks:
+      app_net_aiotask:
+        ipv4_address: 10.22.0.50
+
+
+networks:
+  app_net_aiotask:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.22.0.0/16
