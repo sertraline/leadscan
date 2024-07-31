@@ -15,9 +15,10 @@ from typing import Optional
 from middlewares import user_middleware
 from member_watch import MemberWatch
 from telethon import TelegramClient, events
+from pytz import timezone
+from datetime import datetime
 
 import plugins
-import uvloop
 import asyncio
 import sys
 
@@ -76,10 +77,11 @@ async def check_pending_notes(payload: dict) -> None:
                 continue
             user = dict(user)
             chat_id: int = user["telegram_id"]
-            reminder_time: str = serialized["reminder_time"]
+            reminder_time: datetime = serialized["reminder_time"]
+            to_timezone = reminder_time.astimezone(timezone("Europe/Moscow"))
             text: str = serialized["text"]
 
-            result_text = f"Напоминание о заметке назначенной на {reminder_time}. Текст Вашей заметки: {text}"
+            result_text = f"Напоминание о заметке назначенной на {to_timezone}. Текст Вашей заметки: {text}"
 
             await client.send_message(chat_id, result_text)
             # здесь я отошел от поставленных требований и добавил лишнее bool поле в таблицу notes.

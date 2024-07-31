@@ -103,7 +103,7 @@ class Notes:
         chat_id = message.chat.id
         user_id = message.from_user.id
 
-        query = "SELECT * FROM notes WHERE user_id = $1"
+        query = "SELECT * FROM notes WHERE user_id = $1 ORDER BY reminder_time DESC"
         records = await self.sql.fetch(query, user.id)
         if not records:
             await message.reply("Заметок нет.")
