@@ -14,13 +14,14 @@ from models.users import UserManager
 from typing import Optional
 from middlewares import user_middleware
 from member_watch import MemberWatch
-from telethon import TelegramClient, events
+from telethon import TelegramClient
 from pytz import timezone
 from datetime import datetime
 
 import plugins
 import asyncio
 import sys
+import uvloop
 
 
 # подтянуть переменные из .env
@@ -38,7 +39,7 @@ r = Redis(
 # Редис будет использоваться aiogram для хранилища стейтов
 storage = RedisStorage(redis=r)
 
-client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=TOKEN)
+client = TelegramClient("bot_session", API_ID, API_HASH)
 
 
 async def check_pending_notes(payload: dict) -> None:
@@ -52,42 +53,43 @@ async def check_pending_notes(payload: dict) -> None:
         print("Unable to fetch bot instance.")
         sys.exit(1)
 
-    log.debug('Logging into telethon client...')
-    while True:
-        await asyncio.sleep(60)
-        # проверка каждую минуту
+    async with client:
+        await client.start(bot_token=TOKEN) # type: ignore
+        while True:
+            await asyncio.sleep(60)
+            # проверка каждую минуту
 
-        # вытягиваем записи где дата <= текущая+10мин
-        query = """
-        SELECT * FROM notes WHERE reminder_time <= (now()::timestamp + INTERVAL '10 min')::timestamp;
-        """
+            # вытягиваем записи где дата <= текущая+10мин
+            query = """
+            SELECT * FROM notes WHERE reminder_time <= (now()::timestamp + INTERVAL '10 min')::timestamp;
+            """
 
-        res = await sql.fetch(query)
-        if not res:
-            continue
-        for record in res:
-            serialized = dict(record)
-            if serialized['processed']:
+            res = await sql.fetch(query)
+            if not res:
                 continue
-            uid = serialized["user_id"]
+            for record in res:
+                serialized = dict(record)
+                if serialized['processed']:
+                    continue
+                uid = serialized["user_id"]
 
-            user_query = "SELECT * FROM users WHERE id = $1"
-            user = await sql.fetchrow(user_query, uid)
-            if not user:
-                continue
-            user = dict(user)
-            chat_id: int = user["telegram_id"]
-            reminder_time: datetime = serialized["reminder_time"]
-            to_timezone = reminder_time.astimezone(timezone("Europe/Moscow"))
-            text: str = serialized["text"]
+                user_query = "SELECT * FROM users WHERE id = $1"
+                user = await sql.fetchrow(user_query, uid)
+                if not user:
+                    continue
+                user = dict(user)
+                chat_id: int = user["telegram_id"]
+                reminder_time: datetime = serialized["reminder_time"]
+                to_timezone = reminder_time.astimezone(timezone("Europe/Moscow"))
+                text: str = serialized["text"]
 
-            result_text = f"Напоминание о заметке назначенной на {to_timezone}. Текст Вашей заметки: {text}"
+                result_text = f"Напоминание о заметке назначенной на {to_timezone}. Текст Вашей заметки: {text}"
 
-            await client.send_message(chat_id, result_text)
-            # здесь я отошел от поставленных требований и добавил лишнее bool поле в таблицу notes.
-            # заявка помечается как обработанная, таким образом уведомление никогда не придет дважды.
-            set_processed_query = "UPDATE notes SET processed = true WHERE id = $1"
-            await sql.exec(set_processed_query, serialized['id'])
+                await client.send_message(chat_id, result_text)
+                # здесь я отошел от поставленных требований и добавил лишнее bool поле в таблицу notes.
+                # заявка помечается как обработанная, таким образом уведомление никогда не придет дважды.
+                set_processed_query = "UPDATE notes SET processed = true WHERE id = $1"
+                await sql.exec(set_processed_query, serialized['id'])
 
 async def main() -> None:
     sql = PostgresInterface(log.debug)
@@ -146,4 +148,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    client.loop.run_until_complete(main())
+    uvloop.run(main())
