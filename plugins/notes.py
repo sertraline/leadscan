@@ -9,6 +9,7 @@ from traceback import format_exc
 from datetime import datetime, timedelta
 import json
 from redis.asyncio import Redis
+from pytz import timezone
 
 
 class Duration(NamedTuple):
@@ -111,7 +112,8 @@ class Notes:
             for key in rec.keys():
                 # сериализация дат
                 if key == "reminder_time":
-                    rec[key] = datetime.strftime(rec[key], '%d-%m-%Y %H:%M')
+                    d = rec[key].astimezone(timezone("Europe/Moscow"))
+                    rec[key] = datetime.strftime(d, '%d-%m-%Y %H:%M')
 
         kb = InlineKeyboardBuilder()
         total_items = len(records)
